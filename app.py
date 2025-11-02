@@ -1,53 +1,51 @@
 import streamlit as st
 import yt_dlp
 import os
-import time
 import tempfile
-import shutil
 
-st.title("🎬 YouTube Video Downloader (with Sound)")
+st.title("🎬 YouTube Video Downloader with Sound")
 
-url = st.text_input("🔗 Enter YouTube URL:")
+# === Input field ===
+url = st.text_input("Enter YouTube video URL:")
 
-if st.button("Download"):
-    if not url:
-        st.error("Please enter a valid YouTube URL.")
+# === Download button ===
+if st.button("Download Video"):
+    if not url.strip():
+        st.error("Please enter a YouTube URL.")
     else:
-        # Temporary folder (auto-deletes after session)
-        temp_dir = tempfile.mkdtemp()
-        output_path = os.path.join(temp_dir, f"video_{int(time.time())}.mp4")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-        # Locate ffmpeg
-        ffmpeg_path = shutil.which("ffmpeg")
-        if not ffmpeg_path:
-            st.error("❌ FFmpeg not found. Make sure it's installed via packages.txt.")
-            st.stop()
+            ydl_opts = {
+                "format": "bestvideo+bestaudio/best",   # ensures both audio + video
+                "merge_output_format": "mp4",           # final format
+                "outtmpl": output_template,             # where to save temp file
+                "postprocessors": [{
+                    "key": "FFmpegVideoConvertor",
+                    "preferedformat": "mp4"
+                }]
+            }
 
-        # yt-dlp options
-        ydl_opts = {
-            "format": "bestvideo+bestaudio/best",
-            "merge_output_format": "mp4",
-            "outtmpl": output_path,
-            "ffmpeg_location": ffmpeg_path,
-            "postprocessors": [{"key": "FFmpegMerger"}],
-            "quiet": False
-        }
+            try:
+                st.info("⬇️ Downloading video with sound... please wait.")
 
-        try:
-            st.info("📥 Downloading with sound... Please wait ⏳")
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    title = info.get("title", "video")
+                    video_filename = ydl.prepare_filename(info)
+                    final_path = os.path.splitext(video_filename)[0] + ".mp4"
 
-            if os.path.exists(output_path):
-                st.success("✅ Done! Ready to download.")
-                with open(output_path, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Download to your device",
-                        data=f,
-                        file_name=os.path.basename(output_path),
-                        mime="video/mp4"
-                    )
-            else:
-                st.error("❌ Video file not found.")
-        except Exception as e:
-            st.error(f"⚠️ Error: {e}")
+                if os.path.exists(final_path):
+                    with open(final_path, "rb") as f:
+                        st.success("✅ Download complete with sound!")
+                        st.download_button(
+                            label="📥 Click to download",
+                            data=f,
+                            file_name=f"{title}.mp4",
+                            mime="video/mp4"
+                        )
+                else:
+                    st.error("❌ Something went wrong. File not found.")
+
+            except Exception as e:
+                st.error(f"⚠️ Error: {e}")
