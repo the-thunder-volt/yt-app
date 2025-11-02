@@ -1,49 +1,46 @@
 import streamlit as st
 import yt_dlp
 import os
-import tempfile
-import glob
+import time
 
-st.title("🎬 YouTube Downloader (with Sound)")
+st.title("🎥 YouTube Video Downloader (with Sound)")
 
-url = st.text_input("Enter YouTube video URL:")
+url = st.text_input("🔗 Enter YouTube URL:")
 
-if st.button("Download Video"):
-    if not url.strip():
-        st.error("Please enter a YouTube URL.")
+if st.button("Download"):
+    if not url:
+        st.error("Please enter a valid YouTube URL.")
     else:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ydl_opts = {
-                "format": "bestvideo+bestaudio/best",
-                "merge_output_format": "mp4",
-                "outtmpl": os.path.join(tmpdir, "%(title)s.%(ext)s"),
-                "postprocessors": [
-                    {"key": "FFmpegMerger"}  # ensures audio + video merge
-                ],
-            }
+        # Create a permanent downloads folder
+        download_dir = "downloads"
+        os.makedirs(download_dir, exist_ok=True)
 
-            try:
-                st.info("⬇️ Downloading and merging video + audio...")
+        # Generate unique filename
+        filename = f"video_{int(time.time())}.mp4"
+        output_path = os.path.join(download_dir, filename)
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    title = info.get("title", "video")
+        ydl_opts = {
+            "format": "bv*+ba/b",              # best video + audio
+            "outtmpl": output_path,            # output path
+            "merge_output_format": "mp4",      # merge format
+            "quiet": True
+        }
 
-                # Find any mp4 in the temp directory (the merged one)
-                mp4_files = glob.glob(os.path.join(tmpdir, "*.mp4"))
+        try:
+            st.info("📥 Downloading... please wait.")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
 
-                if not mp4_files:
-                    st.error("❌ Merge failed or file not found.")
-                else:
-                    final_path = mp4_files[0]  # get the first (usually only) MP4 file
-                    with open(final_path, "rb") as f:
-                        st.success(f"✅ Download ready: {title}")
-                        st.download_button(
-                            label="📥 Click to download video",
-                            data=f,
-                            file_name=f"{title}.mp4",
-                            mime="video/mp4",
-                        )
-
-            except Exception as e:
-                st.error(f"⚠️ Error: {e}")
+            if os.path.exists(output_path):
+                st.success("✅ Download complete!")
+                with open(output_path, "rb") as f:
+                    st.download_button(
+                        label="⬇️ Download to your device",
+                        data=f,
+                        file_name=filename,
+                        mime="video/mp4"
+                    )
+            else:
+                st.error("❌ Download failed.")
+        except Exception as e:
+            st.error(f"⚠️ Error: {e}")
