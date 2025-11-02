@@ -2,8 +2,9 @@ import streamlit as st
 import yt_dlp
 import os
 import time
+import shutil
 
-st.title("🎥 YouTube Video Downloader (with Sound)")
+st.title("🎬 YouTube Video Downloader (with Sound)")
 
 url = st.text_input("🔗 Enter YouTube URL:")
 
@@ -11,28 +12,36 @@ if st.button("Download"):
     if not url:
         st.error("Please enter a valid YouTube URL.")
     else:
-        # Create a permanent downloads folder
         download_dir = "downloads"
         os.makedirs(download_dir, exist_ok=True)
 
-        # Generate unique filename
         filename = f"video_{int(time.time())}.mp4"
         output_path = os.path.join(download_dir, filename)
 
+        # Locate ffmpeg automatically
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            st.error("❌ FFmpeg not found. Make sure it's installed or added via packages.txt.")
+            st.stop()
+
         ydl_opts = {
-            "format": "bv*+ba/b",              # best video + audio
-            "outtmpl": output_path,            # output path
-            "merge_output_format": "mp4",      # merge format
-            "quiet": True
+            "format": "bestvideo+bestaudio/best",  # merge highest quality video + audio
+            "merge_output_format": "mp4",
+            "outtmpl": output_path,
+            "ffmpeg_location": ffmpeg_path,        # <-- Ensures yt-dlp uses ffmpeg
+            "postprocessors": [{
+                "key": "FFmpegMerger",             # Merges video+audio properly
+            }],
+            "quiet": False
         }
 
         try:
-            st.info("📥 Downloading... please wait.")
+            st.info("📥 Downloading video with sound... Please wait ⏳")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
             if os.path.exists(output_path):
-                st.success("✅ Download complete!")
+                st.success("✅ Download complete with sound!")
                 with open(output_path, "rb") as f:
                     st.download_button(
                         label="⬇️ Download to your device",
@@ -41,6 +50,6 @@ if st.button("Download"):
                         mime="video/mp4"
                     )
             else:
-                st.error("❌ Download failed.")
+                st.error("❌ File not found after download.")
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
