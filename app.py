@@ -2,67 +2,104 @@ import streamlit as st
 import yt_dlp
 import os
 import tempfile
+import shutil
+import glob
 
-st.title("🎬 YouTube Video Downloader (Best Quality + Audio)")
+st.set_page_config(page_title="YouTube Downloader", page_icon="🎬")
+st.title("🎬 YouTube Downloader — Auto merge or fallback")
 
-url = st.text_input("🔗 Enter YouTube URL:")
+url = st.text_input("Enter YouTube video URL:")
 
-if st.button("Confirm & Prepare Download"):
+if "status" not in st.session_state:
+    st.session_state.status = ""
+if "progress" not in st.session_state:
+    st.session_state.progress = 0
+
+progress_bar = st.progress(0)
+status_placeholder = st.empty()
+
+def hook(d):
+    if d['status'] == 'downloading':
+        p = d.get('_percent_str', '').strip()
+        try:
+            val = float(p.replace('%', ''))
+            progress_bar.progress(int(val))
+        except:
+            pass
+        st.session_state.status = f"⬇️ Downloading... {p}"
+    elif d['status'] == 'finished':
+        progress_bar.progress(100)
+        st.session_state.status = "✅ Download finished — merging..."
+
+if st.button("✅ Confirm"):
     if not url.strip():
-        st.error("❌ Please enter a valid URL.")
+        st.error("Please enter a valid YouTube URL.")
     else:
-        with st.spinner("Preparing download..."):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            st.session_state.status = "Starting download..."
+            status_placeholder.info(st.session_state.status)
+            ffmpeg_path = shutil.which("ffmpeg")
 
-                ydl_opts = {
-                    "format": "bv*+ba/b",
+            outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
+            ydl_opts = {
+                "outtmpl": outtmpl,
+                "format": ""bv*+ba/b",
+                "progress_hooks": [hook],
+                "quiet": True,
+            }
+
+            if ffmpeg_path:
+                ydl_opts.update({
                     "merge_output_format": "mp4",
-                    "outtmpl": output_template,
-                    "noplaylist": True
-                }
+                    "ffmpeg_location": ffmpeg_path,
+                    "postprocessors": [{"key": "FFmpegMerger"}],
+                })
 
-                try:
-                    # Get video info (no download yet)
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        filesize = info.get("filesize_approx") or info.get("filesize") or 0
-                        title = info.get("title", "video")
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    title = info.get("title", "video")
+                    base = ydl.prepare_filename(info)
 
-                    size_mb = round(filesize / (1024 * 1024), 2)
-                    st.info(f"🎥 **{title}**  |  💾 Approx Size: ~{size_mb} MB")
+                # find all files
+                all_files = glob.glob(os.path.join(tmpdir, "*"))
+                mp4_files = [f for f in all_files if f.lower().endswith(".mp4")]
+                audio_files = [f for f in all_files if f.lower().endswith((".m4a", ".webm", ".opus"))]
+                video_files = [f for f in all_files if f.lower().endswith((".mp4", ".webm"))]
 
-                    # === Download button ===
-                    if st.button("⬇️ Start Download"):
-                        st.info("Downloading best video with audio... please wait.")
-                        try:
-                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                                info = ydl.extract_info(url, download=True)
-                                final_file = ydl.prepare_filename(info)
-                                merged_file = os.path.splitext(final_file)[0] + ".mp4"
+                if mp4_files:
+                    # merged file found
+                    file_path = mp4_files[0]
+                    st.success("✅ Video (with audio) ready to download!")
+                    with open(file_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Download MP4 (with sound)",
+                            data=f,
+                            file_name=os.path.basename(file_path),
+                            mime="video/mp4",
+                        )
+                elif audio_files and video_files:
+                    # fallback to separate audio + video
+                    st.warning("⚠️ FFmpeg not available — downloading audio & video separately.")
+                    with open(video_files[0], "rb") as vf:
+                        st.download_button(
+                            label="📺 Download Video (no sound)",
+                            data=vf,
+                            file_name=os.path.basename(video_files[0]),
+                            mime="video/mp4",
+                        )
+                    with open(audio_files[0], "rb") as af:
+                        st.download_button(
+                            label="🎧 Download Audio",
+                            data=af,
+                            file_name=os.path.basename(audio_files[0]),
+                            mime="audio/mp4",
+                        )
+                else:
+                    st.error("❌ Could not find downloaded files. Try again.")
 
-                            if os.path.exists(merged_file):
-                                with open(merged_file, "rb") as f:
-                                    st.success("✅ Download complete with audio!")
-                                    st.download_button(
-                                        label="📥 Save Video to Device",
-                                        data=f,
-                                        file_name=os.path.basename(merged_file),
-                                        mime="video/mp4"
-                                    )
-                            else:
-                                st.warning("⚠️ Merged video not found. Trying separate audio...")
-                                audio_path = os.path.splitext(final_file)[0] + ".m4a"
-                                if os.path.exists(audio_path):
-                                    with open(audio_path, "rb") as a:
-                                        st.download_button(
-                                            label="🎧 Download Audio Only",
-                                            data=a,
-                                            file_name=os.path.basename(audio_path),
-                                            mime="audio/mp4"
-                                        )
-                                else:
-                                    st.error("❌ No downloadable file found.")
+            except Exception as e:
+                st.error(f"⚠️ Error: {e}")
 
-                        except Exception as err:
-                            st.error(f"⚠️ Download e
+if st.session_state.status:
+    status_placeholder.info(st.session_state.status)
