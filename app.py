@@ -4,106 +4,85 @@ import os
 import tempfile
 
 st.set_page_config(page_title="🎬 Smart YouTube Downloader", layout="centered")
+st.title("🎬 Smart YouTube Downloader — Best Quality Only")
 
-st.title("🎬 Smart YouTube Downloader with Auto Merge")
-
-# === Input field ===
 url = st.text_input("Enter YouTube video URL:")
 
-def get_formats(url):
-    try:
-        ydl_opts = {"quiet": True, "skip_download": True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            formats = info.get("formats", [])
-        return formats, info.get("title", "video")
-    except Exception as e:
-        st.error(f"Error fetching formats: {e}")
-        return None, None
+if st.button("⬇️ Download Best Quality"):
+    if not url.strip():
+        st.error("Please enter a valid YouTube URL.")
+    else:
+        with st.spinner("🎥 Fetching and downloading best quality video..."):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Define output template
+                outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-if url:
-    formats, title = get_formats(url)
-    if formats:
-        st.subheader(f"🎥 Available Formats for: {title}")
-        video_formats = []
-        audio_formats = []
-        for f in formats:
-            if f.get("vcodec") != "none" and f.get("acodec") == "none":
-                video_formats.append(f)
-            elif f.get("acodec") != "none" and f.get("vcodec") == "none":
-                audio_formats.append(f)
-            elif f.get("vcodec") != "none" and f.get("acodec") != "none":
-                video_formats.append(f)
+                # Main option — best video + best audio merged
+                ydl_opts = {
+                    "format": "bestvideo+bestaudio/best",
+                    "merge_output_format": "mp4",
+                    "outtmpl": outtmpl,
+                    "quiet": True
+                }
 
-        with st.expander("🎞 Video + Audio Formats"):
-            for f in video_formats:
-                st.write(f"**{f.get('format_note', 'N/A')}** — {f.get('ext', 'N/A')} | {f.get('height', '')}p | {round(f.get('filesize', 0)/1e6,2) if f.get('filesize') else '?'} MB")
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                        title = info.get("title", "video")
+                        filename = ydl.prepare_filename(info)
+                        final_path = os.path.splitext(filename)[0] + ".mp4"
 
-        with st.expander("🎧 Audio Only Formats"):
-            for f in audio_formats:
-                st.write(f"**{f.get('abr', 'N/A')}kbps** — {f.get('ext', 'N/A')} | {round(f.get('filesize', 0)/1e6,2) if f.get('filesize') else '?'} MB")
+                    # ✅ CASE 1: Successfully merged video+audio
+                    if os.path.exists(final_path):
+                        with open(final_path, "rb") as f:
+                            st.success("✅ Download complete (with sound)!")
+                            st.download_button(
+                                "📥 Download Merged Video",
+                                f,
+                                file_name=f"{title}.mp4",
+                                mime="video/mp4"
+                            )
 
-        st.info("🎯 Click below to download the best possible version (auto merge if possible).")
+                    else:
+                        # ⚠️ CASE 2: Merge failed → fallback to video only + audio separately
+                        st.warning("⚠️ Merge failed — downloading best video and audio separately...")
 
-        if st.button("⬇️ Download Best Quality"):
-            with st.spinner("Downloading best quality video with audio... please wait ⏳"):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    video_path = os.path.join(tmpdir, "video.mp4")
-                    audio_path = os.path.join(tmpdir, "audio.m4a")
+                        video_path = os.path.join(tmpdir, f"{title}_video.mp4")
+                        audio_path = os.path.join(tmpdir, f"{title}_audio.m4a")
 
-                    # Options for best possible download
-                    ydl_opts = {
-                        "format": "bestvideo+bestaudio/best",
-                        "outtmpl": os.path.join(tmpdir, "%(title)s.%(ext)s"),
-                        "merge_output_format": "mp4",
-                        "quiet": True,
-                    }
+                        # Download best video only
+                        video_opts = {"format": "bestvideo", "outtmpl": video_path, "quiet": True}
+                        with yt_dlp.YoutubeDL(video_opts) as ydl:
+                            ydl.download([url])
 
-                    try:
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            info = ydl.extract_info(url, download=True)
-                            filename = ydl.prepare_filename(info)
-                            final_file = os.path.splitext(filename)[0] + ".mp4"
+                        # Download best audio only
+                        audio_opts = {"format": "bestaudio", "outtmpl": audio_path, "quiet": True}
+                        with yt_dlp.YoutubeDL(audio_opts) as ydl:
+                            ydl.download([url])
 
-                        if os.path.exists(final_file):
-                            with open(final_file, "rb") as f:
-                                st.success("✅ Merged video+audio downloaded successfully!")
+                        # ✅ Show download buttons
+                        if os.path.exists(video_path):
+                            with open(video_path, "rb") as v:
+                                st.success("🎞 Best quality video downloaded.")
                                 st.download_button(
-                                    label="📥 Download Final Video",
-                                    data=f,
-                                    file_name=f"{title}.mp4",
+                                    "🎥 Download Video Only",
+                                    v,
+                                    file_name=f"{title}_video.mp4",
                                     mime="video/mp4"
                                 )
-                        else:
-                            # fallback: separate downloads
-                            st.warning("⚠️ Merging failed. Downloading separately...")
 
-                            # Video only
-                            ydl_opts_video = {"format": "bestvideo", "outtmpl": video_path, "quiet": True}
-                            ydl_opts_audio = {"format": "bestaudio", "outtmpl": audio_path, "quiet": True}
+                        if os.path.exists(audio_path):
+                            # rename to .mp3 for user clarity
+                            renamed_audio = audio_path.replace(".m4a", ".mp3")
+                            os.rename(audio_path, renamed_audio)
+                            with open(renamed_audio, "rb") as a:
+                                st.info("🎧 Separate audio available (converted to .mp3).")
+                                st.download_button(
+                                    "🎧 Download Audio Only",
+                                    a,
+                                    file_name=f"{title}_audio.mp3",
+                                    mime="audio/mpeg"
+                                )
 
-                            with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
-                                ydl.download([url])
-                            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-                                ydl.download([url])
-
-                            if os.path.exists(video_path):
-                                with open(video_path, "rb") as v:
-                                    st.download_button(
-                                        label="🎥 Download Video Only",
-                                        data=v,
-                                        file_name=f"{title}_video.mp4",
-                                        mime="video/mp4"
-                                    )
-
-                            if os.path.exists(audio_path):
-                                with open(audio_path, "rb") as a:
-                                    st.download_button(
-                                        label="🎧 Download Audio Only",
-                                        data=a,
-                                        file_name=f"{title}_audio.m4a",
-                                        mime="audio/mp4"
-                                    )
-
-                    except Exception as e:
-                        st.error(f"Error during download: {e}")
+                except Exception as e:
+                    st.error(f"⚠️ Error during download: {e}")
