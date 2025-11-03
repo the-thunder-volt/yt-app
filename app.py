@@ -2,142 +2,142 @@ import streamlit as st
 import yt_dlp
 import os
 import tempfile
-import time
-import shutil
 import glob
+import shutil
 
-st.set_page_config(page_title="YouTube Downloader", page_icon="🎬")
-st.title("🎬 YouTube Downloader — Confirm → Progress → Download (with sound)")
+st.set_page_config(page_title="🎬 YouTube Downloader", page_icon="🎥")
+st.title("🎬 YouTube Downloader with Quality Selector")
 
+# ========================
+# Input for YouTube URL
+# ========================
 url = st.text_input("Enter YouTube video URL:")
 
-# initialize session state keys
-if "status_text" not in st.session_state:
-    st.session_state.status_text = ""
-if "progress" not in st.session_state:
-    st.session_state.progress = 0
+# Session state to store info
+if "formats" not in st.session_state:
+    st.session_state.formats = []
+if "selected_format" not in st.session_state:
+    st.session_state.selected_format = None
 
 progress_bar = st.progress(0)
 status_placeholder = st.empty()
 
+
 def progress_hook(d):
-    # Called by yt-dlp during download; update progress text & bar
-    status = d.get("status")
-    if status == "downloading":
-        pct = d.get("_percent_str") or d.get("percent")
-        # percent might come like "23.4%" or None
-        if isinstance(pct, str):
-            try:
-                num = float(pct.strip().replace("%", ""))
-                st.session_state.progress = max(0, min(100, int(num)))
-                progress_bar.progress(st.session_state.progress)
-                st.session_state.status_text = f"⬇️ Downloading: {pct.strip()}"
-            except Exception:
-                st.session_state.status_text = f"⬇️ Downloading: {pct}"
-        else:
-            st.session_state.status_text = "⬇️ Downloading..."
-    elif status == "finished":
-        st.session_state.status_text = "🔁 Download finished; finalizing/merging..."
+    """Progress bar updater"""
+    if d['status'] == 'downloading':
+        p = d.get('_percent_str', '').strip()
+        try:
+            val = float(p.replace('%', ''))
+            progress_bar.progress(int(val))
+        except:
+            pass
+        status_placeholder.info(f"⬇️ Downloading... {p}")
+    elif d['status'] == 'finished':
         progress_bar.progress(100)
+        status_placeholder.info("✅ Download complete — processing...")
 
-# Confirm button starts everything
-if st.button("✅ Confirm"):
+
+# ========================
+# STEP 1: Fetch formats
+# ========================
+if st.button("🔍 Fetch Available Qualities"):
     if not url.strip():
-        st.error("Please enter a YouTube URL.")
+        st.error("Please enter a valid YouTube URL.")
     else:
-        st.session_state.status_text = "Starting..."
-        progress_bar.progress(0)
-        status_placeholder.info(st.session_state.status_text)
+        try:
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats = [
+                    {
+                        "format_id": f["format_id"],
+                        "ext": f["ext"],
+                        "resolution": f.get("resolution") or f"{f.get('height', '')}p",
+                        "fps": f.get("fps", ""),
+                        "filesize": f.get("filesize") or f.get("filesize_approx"),
+                        "vcodec": f.get("vcodec"),
+                        "acodec": f.get("acodec"),
+                    }
+                    for f in info["formats"]
+                    if f.get("vcodec") != "none" and f.get("acodec") != "none"
+                ]
 
+                # Filter only video+audio combined formats
+                st.session_state.formats = sorted(formats, key=lambda x: x["height"] if x["height"] else 0)
+                st.success("✅ Fetched available qualities successfully!")
+        except Exception as e:
+            st.error(f"⚠️ Error fetching formats: {e}")
+
+# ========================
+# STEP 2: Select format
+# ========================
+if st.session_state.formats:
+    options = [
+        f"{f['resolution']} ({f['ext']}) - {round((f['filesize'] or 0)/1024/1024, 1)} MB"
+        for f in st.session_state.formats
+    ]
+    selected_index = st.selectbox("🎚️ Choose quality to download:", range(len(options)), format_func=lambda i: options[i])
+    selected_format = st.session_state.formats[selected_index]
+    st.session_state.selected_format = selected_format
+
+# ========================
+# STEP 3: Download
+# ========================
+if st.button("✅ Confirm & Download"):
+    if not url.strip():
+        st.error("Please enter a valid YouTube URL.")
+    elif not st.session_state.selected_format:
+        st.error("Please fetch and select a video quality first.")
+    else:
         with tempfile.TemporaryDirectory() as tmpdir:
-            out_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
+            st.info("Preparing your download...")
 
-            # detect ffmpeg binary (if available in environment)
+            output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
             ffmpeg_path = shutil.which("ffmpeg")
 
-            # try merged download first (preferred)
             ydl_opts = {
-                "format": "bestvideo+bestaudio/best",
-                "outtmpl": out_template,
+                "format": st.session_state.selected_format["format_id"],
+                "outtmpl": output_template,
                 "progress_hooks": [progress_hook],
-                "quiet": True
+                "quiet": True,
             }
 
-            # If ffmpeg is available, tell yt-dlp to merge via FFmpegMerger
+            # Add ffmpeg options if available
             if ffmpeg_path:
-                ydl_opts["merge_output_format"] = "mp4"
-                ydl_opts["postprocessors"] = [{"key": "FFmpegMerger"}]
-                ydl_opts["ffmpeg_location"] = ffmpeg_path
+                ydl_opts.update({
+                    "merge_output_format": "mp4",
+                    "ffmpeg_location": ffmpeg_path,
+                })
 
             try:
-                status_placeholder.info("⬇️ Attempting best quality (video+audio)...")
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
-                    # sometimes yt-dlp returns different filename patterns; search for mp4
-                    # prepare_filename may point to a file without .mp4 if merge postproc not used
+                    title = info.get("title", "video")
                     base = ydl.prepare_filename(info)
-                # find any mp4 created in tmpdir (robust)
-                mp4_candidates = glob.glob(os.path.join(tmpdir, "*.mp4"))
-                if mp4_candidates:
-                    final_path = mp4_candidates[0]
-                    status_placeholder.success("✅ Merged file ready with audio!")
-                    # read bytes and show single download button
-                    with open(final_path, "rb") as fh:
-                        data_bytes = fh.read()
-                    st.download_button(
-                        label="📥 Download MP4 (with audio)",
-                        data=data_bytes,
-                        file_name=os.path.basename(final_path),
-                        mime="video/mp4"
-                    )
+
+                # Look for downloaded files
+                all_files = glob.glob(os.path.join(tmpdir, "*"))
+                mp4_files = [f for f in all_files if f.lower().endswith(".mp4")]
+                audio_files = [f for f in all_files if f.lower().endswith((".m4a", ".webm", ".opus"))]
+                video_files = [f for f in all_files if f.lower().endswith((".mp4", ".webm"))]
+
+                if mp4_files:
+                    file_path = mp4_files[0]
+                    with open(file_path, "rb") as f:
+                        st.success("✅ Video with sound ready!")
+                        st.download_button(
+                            label="📥 Download to Device",
+                            data=f,
+                            file_name=os.path.basename(file_path),
+                            mime="video/mp4",
+                        )
+                elif audio_files and video_files:
+                    st.warning("⚠️ FFmpeg not available — downloading separately.")
+                    with open(video_files[0], "rb") as vf:
+                        st.download_button("📺 Download Video (no sound)", vf, os.path.basename(video_files[0]), mime="video/mp4")
+                    with open(audio_files[0], "rb") as af:
+                        st.download_button("🎧 Download Audio", af, os.path.basename(audio_files[0]), mime="audio/mp4")
                 else:
-                    # no merged mp4 found — fall back to separate downloads automatically
-                    status_placeholder.warning("⚠️ Merged MP4 not found. Downloading video and audio separately...")
-                    # reset progress
-                    progress_bar.progress(0)
-                    st.session_state.status_text = "Downloading video stream..."
-                    status_placeholder.info(st.session_state.status_text)
-                    video_path = os.path.join(tmpdir, "video_only.%(ext)s")
-                    audio_path = os.path.join(tmpdir, "audio_only.%(ext)s")
-
-                    # download video-only (prefer mp4)
-                    with yt_dlp.YoutubeDL({"format": "bestvideo[ext=mp4]/bestvideo", "outtmpl": video_path, "progress_hooks": [progress_hook], "quiet": True}) as ydlv:
-                        info_v = ydlv.extract_info(url, download=True)
-                    # download audio-only (m4a preferred)
-                    progress_bar.progress(30)
-                    st.session_state.status_text = "Downloading audio stream..."
-                    status_placeholder.info(st.session_state.status_text)
-                    with yt_dlp.YoutubeDL({"format": "bestaudio[ext=m4a]/bestaudio", "outtmpl": audio_path, "progress_hooks": [progress_hook], "quiet": True}) as ydla:
-                        info_a = ydla.extract_info(url, download=True)
-
-                    # locate downloaded files
-                    vid_files = glob.glob(os.path.join(tmpdir, "video_only.*"))
-                    aud_files = glob.glob(os.path.join(tmpdir, "audio_only.*"))
-                    if vid_files and aud_files:
-                        # read bytes for each and provide single pair of buttons (not two-step)
-                        with open(vid_files[0], "rb") as vf:
-                            vbytes = vf.read()
-                        with open(aud_files[0], "rb") as af:
-                            abytes = af.read()
-                        status_placeholder.success("✅ Video and audio ready (separate files).")
-                        # Provide two buttons but they appear together once ready
-                        st.download_button(
-                            label="📥 Download Video (no audio)",
-                            data=vbytes,
-                            file_name=os.path.basename(vid_files[0]),
-                            mime="video/mp4"
-                        )
-                        st.download_button(
-                            label="📥 Download Audio",
-                            data=abytes,
-                            file_name=os.path.basename(aud_files[0]),
-                            mime="audio/mp4"
-                        )
-                    else:
-                        st.error("❌ Fallback download failed. Try again.")
-            except Exception as err:
-                st.error(f"⚠️ Error during download: {err}")
-
-# show live text status under the UI
-if st.session_state.status_text:
-    status_placeholder.info(st.session_state.status_text)
+                    st.error("❌ File not found after download. Try again.")
+            except Exception as e:
+                st.error(f"⚠️ Error during download: {e}")
