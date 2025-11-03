@@ -48,37 +48,49 @@ if st.button("🔍 Fetch Available Qualities"):
         try:
             with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
-                formats = [
-                    {
-                        "format_id": f["format_id"],
-                        "ext": f["ext"],
-                        "resolution": f.get("resolution") or f"{f.get('height', '')}p",
-                        "fps": f.get("fps", ""),
-                        "filesize": f.get("filesize") or f.get("filesize_approx"),
-                        "vcodec": f.get("vcodec"),
-                        "acodec": f.get("acodec"),
-                    }
-                    for f in info["formats"]
-                    if f.get("vcodec") != "none" and f.get("acodec") != "none"
-                ]
+                formats = []
+                for f in info["formats"]:
+                    if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                        filesize = f.get("filesize") or f.get("filesize_approx")
+                        height = f.get("height", 0)
+                        resolution = f.get("resolution") or f"{height}p" if height else "unknown"
+                        formats.append({
+                            "format_id": f["format_id"],
+                            "ext": f["ext"],
+                            "resolution": resolution,
+                            "fps": f.get("fps", ""),
+                            "filesize": filesize,
+                            "vcodec": f.get("vcodec"),
+                            "acodec": f.get("acodec"),
+                            "height": height,
+                        })
 
-                # Filter only video+audio combined formats
-                st.session_state.formats = sorted(formats, key=lambda x: x["height"] if x["height"] else 0)
-                st.success("✅ Fetched available qualities successfully!")
+                if not formats:
+                    st.warning("⚠️ No video+audio formats found. Try again with another URL.")
+                else:
+                    # Safely sort formats (ignore None)
+                    st.session_state.formats = sorted(formats, key=lambda x: x["height"] or 0)
+                    st.success("✅ Fetched available qualities successfully!")
+
         except Exception as e:
             st.error(f"⚠️ Error fetching formats: {e}")
+
 
 # ========================
 # STEP 2: Select format
 # ========================
 if st.session_state.formats:
     options = [
-        f"{f['resolution']} ({f['ext']}) - {round((f['filesize'] or 0)/1024/1024, 1)} MB"
+        f"{f['resolution']} ({f['ext']}) - "
+        f"{round((f['filesize'] or 0)/1024/1024, 1)} MB"
         for f in st.session_state.formats
     ]
-    selected_index = st.selectbox("🎚️ Choose quality to download:", range(len(options)), format_func=lambda i: options[i])
-    selected_format = st.session_state.formats[selected_index]
-    st.session_state.selected_format = selected_format
+    selected_index = st.selectbox(
+        "🎚️ Choose quality to download:",
+        range(len(options)),
+        format_func=lambda i: options[i],
+    )
+    st.session_state.selected_format = st.session_state.formats[selected_index]
 
 # ========================
 # STEP 3: Download
@@ -102,7 +114,6 @@ if st.button("✅ Confirm & Download"):
                 "quiet": True,
             }
 
-            # Add ffmpeg options if available
             if ffmpeg_path:
                 ydl_opts.update({
                     "merge_output_format": "mp4",
@@ -134,9 +145,19 @@ if st.button("✅ Confirm & Download"):
                 elif audio_files and video_files:
                     st.warning("⚠️ FFmpeg not available — downloading separately.")
                     with open(video_files[0], "rb") as vf:
-                        st.download_button("📺 Download Video (no sound)", vf, os.path.basename(video_files[0]), mime="video/mp4")
+                        st.download_button(
+                            "📺 Download Video (no sound)",
+                            vf,
+                            os.path.basename(video_files[0]),
+                            mime="video/mp4",
+                        )
                     with open(audio_files[0], "rb") as af:
-                        st.download_button("🎧 Download Audio", af, os.path.basename(audio_files[0]), mime="audio/mp4")
+                        st.download_button(
+                            "🎧 Download Audio",
+                            af,
+                            os.path.basename(audio_files[0]),
+                            mime="audio/mp4",
+                        )
                 else:
                     st.error("❌ File not found after download. Try again.")
             except Exception as e:
