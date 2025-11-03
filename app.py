@@ -2,104 +2,95 @@ import streamlit as st
 import yt_dlp
 import os
 import tempfile
-import shutil
-import glob
 
-st.set_page_config(page_title="YouTube Downloader", page_icon="🎬")
-st.title("🎬 YouTube Downloader — Auto merge or fallback")
+st.title("🎞️ YouTube Downloader — Best Video + Audio")
 
-url = st.text_input("Enter YouTube video URL:")
+url = st.text_input("🔗 Enter YouTube Video URL:")
 
-if "status" not in st.session_state:
-    st.session_state.status = ""
-if "progress" not in st.session_state:
-    st.session_state.progress = 0
-
-progress_bar = st.progress(0)
-status_placeholder = st.empty()
-
-def hook(d):
-    if d['status'] == 'downloading':
-        p = d.get('_percent_str', '').strip()
-        try:
-            val = float(p.replace('%', ''))
-            progress_bar.progress(int(val))
-        except:
-            pass
-        st.session_state.status = f"⬇️ Downloading... {p}"
-    elif d['status'] == 'finished':
-        progress_bar.progress(100)
-        st.session_state.status = "✅ Download finished — merging..."
-
-if st.button("✅ Confirm"):
+if st.button("Confirm & Prepare Download"):
     if not url.strip():
-        st.error("Please enter a valid YouTube URL.")
+        st.error("❌ Please enter a valid YouTube URL.")
     else:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            st.session_state.status = "Starting download..."
-            status_placeholder.info(st.session_state.status)
-            ffmpeg_path = shutil.which("ffmpeg")
-
-            outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            ydl_opts = {
-                "outtmpl": outtmpl,
-                "format": ""bv*+ba/b",
-                "progress_hooks": [hook],
-                "quiet": True,
-            }
-
-            if ffmpeg_path:
-                ydl_opts.update({
-                    "merge_output_format": "mp4",
-                    "ffmpeg_location": ffmpeg_path,
-                    "postprocessors": [{"key": "FFmpegMerger"}],
-                })
-
+        with st.spinner("Analyzing video... please wait."):
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    title = info.get("title", "video")
-                    base = ydl.prepare_filename(info)
+                # Temporary directory for safe handling
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-                # find all files
-                all_files = glob.glob(os.path.join(tmpdir, "*"))
-                mp4_files = [f for f in all_files if f.lower().endswith(".mp4")]
-                audio_files = [f for f in all_files if f.lower().endswith((".m4a", ".webm", ".opus"))]
-                video_files = [f for f in all_files if f.lower().endswith((".mp4", ".webm"))]
+                    ydl_opts = {
+                        "format": "bv*+ba/b",          # best video + audio
+                        "merge_output_format": "mp4",  # final output
+                        "outtmpl": output_template,
+                        "noplaylist": True,
+                        "quiet": True
+                    }
 
-                if mp4_files:
-                    # merged file found
-                    file_path = mp4_files[0]
-                    st.success("✅ Video (with audio) ready to download!")
-                    with open(file_path, "rb") as f:
-                        st.download_button(
-                            label="📥 Download MP4 (with sound)",
-                            data=f,
-                            file_name=os.path.basename(file_path),
-                            mime="video/mp4",
-                        )
-                elif audio_files and video_files:
-                    # fallback to separate audio + video
-                    st.warning("⚠️ FFmpeg not available — downloading audio & video separately.")
-                    with open(video_files[0], "rb") as vf:
-                        st.download_button(
-                            label="📺 Download Video (no sound)",
-                            data=vf,
-                            file_name=os.path.basename(video_files[0]),
-                            mime="video/mp4",
-                        )
-                    with open(audio_files[0], "rb") as af:
-                        st.download_button(
-                            label="🎧 Download Audio",
-                            data=af,
-                            file_name=os.path.basename(audio_files[0]),
-                            mime="audio/mp4",
-                        )
-                else:
-                    st.error("❌ Could not find downloaded files. Try again.")
+                    # Get info first
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        title = info.get("title", "video")
+                        filesize = info.get("filesize_approx") or 0
+                        size_mb = round(filesize / (1024 * 1024), 2)
+
+                    st.info(f"🎥 **{title}**  |  💾 ~{size_mb} MB (approx)")
+                    
+                    # Show progress bar while downloading
+                    progress = st.progress(0)
+                    status_text = st.empty()
+
+                    # Progress hook
+                    def progress_hook(d):
+                        if d['status'] == 'downloading':
+                            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+                            downloaded = d.get('downloaded_bytes', 0)
+                            percent = int(downloaded / total_bytes * 100) if total_bytes else 0
+                            progress.progress(percent)
+                            status_text.text(f"⬇️ Downloading... {percent}%")
+
+                    # Actual download
+                    ydl_opts["progress_hooks"] = [progress_hook]
+
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                        video_path = ydl.prepare_filename(info)
+                        merged_path = os.path.splitext(video_path)[0] + ".mp4"
+
+                    progress.progress(100)
+                    status_text.text("✅ Download completed!")
+
+                    # Provide buttons for both video and audio
+                    if os.path.exists(merged_path):
+                        with open(merged_path, "rb") as v:
+                            st.download_button(
+                                label="📽️ Download Video (MP4)",
+                                data=v,
+                                file_name=os.path.basename(merged_path),
+                                mime="video/mp4"
+                            )
+
+                    # Extract audio separately (mp4/m4a)
+                    audio_path = os.path.splitext(video_path)[0] + ".m4a"
+                    ydl_opts_audio = {
+                        "format": "bestaudio/best",
+                        "outtmpl": audio_path,
+                        "quiet": True,
+                        "postprocessors": [{
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "m4a"
+                        }]
+                    }
+
+                    with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl_audio:
+                        ydl_audio.download([url])
+
+                    if os.path.exists(audio_path):
+                        with open(audio_path, "rb") as a:
+                            st.download_button(
+                                label="🎧 Download Audio Only",
+                                data=a,
+                                file_name=os.path.basename(audio_path),
+                                mime="audio/mp4"
+                            )
 
             except Exception as e:
                 st.error(f"⚠️ Error: {e}")
-
-if st.session_state.status:
-    status_placeholder.info(st.session_state.status)
