@@ -6,14 +6,10 @@ import glob
 import shutil
 
 st.set_page_config(page_title="🎬 YouTube Downloader", page_icon="🎥")
-st.title("🎬 YouTube Downloader with Quality Selector")
+st.title("🎬 YouTube Downloader (All Formats)")
 
-# ========================
-# Input for YouTube URL
-# ========================
 url = st.text_input("Enter YouTube video URL:")
 
-# Session state to store info
 if "formats" not in st.session_state:
     st.session_state.formats = []
 if "selected_format" not in st.session_state:
@@ -24,7 +20,6 @@ status_placeholder = st.empty()
 
 
 def progress_hook(d):
-    """Progress bar updater"""
     if d['status'] == 'downloading':
         p = d.get('_percent_str', '').strip()
         try:
@@ -38,9 +33,7 @@ def progress_hook(d):
         status_placeholder.info("✅ Download complete — processing...")
 
 
-# ========================
-# STEP 1: Fetch formats
-# ========================
+# ========== STEP 1: FETCH FORMATS ==========
 if st.button("🔍 Fetch Available Qualities"):
     if not url.strip():
         st.error("Please enter a valid YouTube URL.")
@@ -50,59 +43,63 @@ if st.button("🔍 Fetch Available Qualities"):
                 info = ydl.extract_info(url, download=False)
                 formats = []
                 for f in info["formats"]:
-                    if f.get("vcodec") != "none" and f.get("acodec") != "none":
-                        filesize = f.get("filesize") or f.get("filesize_approx")
-                        height = f.get("height", 0)
-                        resolution = f.get("resolution") or f"{height}p" if height else "unknown"
-                        formats.append({
-                            "format_id": f["format_id"],
-                            "ext": f["ext"],
-                            "resolution": resolution,
-                            "fps": f.get("fps", ""),
-                            "filesize": filesize,
-                            "vcodec": f.get("vcodec"),
-                            "acodec": f.get("acodec"),
-                            "height": height,
-                        })
+                    filesize = f.get("filesize") or f.get("filesize_approx")
+                    height = f.get("height", 0)
+                    resolution = f.get("resolution") or (f"{height}p" if height else "audio")
+                    vcodec = f.get("vcodec")
+                    acodec = f.get("acodec")
+                    type_str = (
+                        "🎞️ Video+Audio" if vcodec != "none" and acodec != "none" else
+                        "🎥 Video-only" if vcodec != "none" else
+                        "🎧 Audio-only"
+                    )
+
+                    formats.append({
+                        "format_id": f["format_id"],
+                        "ext": f["ext"],
+                        "resolution": resolution,
+                        "fps": f.get("fps", ""),
+                        "filesize": filesize,
+                        "vcodec": vcodec,
+                        "acodec": acodec,
+                        "height": height,
+                        "type": type_str,
+                    })
 
                 if not formats:
-                    st.warning("⚠️ No video+audio formats found. Try again with another URL.")
+                    st.warning("⚠️ No formats found for this video.")
                 else:
-                    # Safely sort formats (ignore None)
-                    st.session_state.formats = sorted(formats, key=lambda x: x["height"] or 0)
-                    st.success("✅ Fetched available qualities successfully!")
+                    st.session_state.formats = sorted(formats, key=lambda x: (x["height"] or 0))
+                    st.success("✅ All available qualities fetched successfully!")
 
         except Exception as e:
             st.error(f"⚠️ Error fetching formats: {e}")
 
 
-# ========================
-# STEP 2: Select format
-# ========================
+# ========== STEP 2: SELECT FORMAT ==========
 if st.session_state.formats:
     options = [
-        f"{f['resolution']} ({f['ext']}) - "
+        f"{f['resolution']} | {f['type']} | {f['ext']} | "
         f"{round((f['filesize'] or 0)/1024/1024, 1)} MB"
         for f in st.session_state.formats
     ]
     selected_index = st.selectbox(
-        "🎚️ Choose quality to download:",
+        "🎚️ Choose format to download:",
         range(len(options)),
         format_func=lambda i: options[i],
     )
     st.session_state.selected_format = st.session_state.formats[selected_index]
 
-# ========================
-# STEP 3: Download
-# ========================
+
+# ========== STEP 3: DOWNLOAD ==========
 if st.button("✅ Confirm & Download"):
     if not url.strip():
         st.error("Please enter a valid YouTube URL.")
     elif not st.session_state.selected_format:
-        st.error("Please fetch and select a video quality first.")
+        st.error("Please fetch and select a format first.")
     else:
         with tempfile.TemporaryDirectory() as tmpdir:
-            st.info("Preparing your download...")
+            st.info("Preparing download...")
 
             output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
             ffmpeg_path = shutil.which("ffmpeg")
@@ -126,37 +123,19 @@ if st.button("✅ Confirm & Download"):
                     title = info.get("title", "video")
                     base = ydl.prepare_filename(info)
 
-                # Look for downloaded files
                 all_files = glob.glob(os.path.join(tmpdir, "*"))
-                mp4_files = [f for f in all_files if f.lower().endswith(".mp4")]
-                audio_files = [f for f in all_files if f.lower().endswith((".m4a", ".webm", ".opus"))]
-                video_files = [f for f in all_files if f.lower().endswith((".mp4", ".webm"))]
+                media_files = [f for f in all_files if os.path.isfile(f)]
 
-                if mp4_files:
-                    file_path = mp4_files[0]
+                if media_files:
+                    file_path = media_files[0]
                     with open(file_path, "rb") as f:
-                        st.success("✅ Video with sound ready!")
+                        mime = "audio/mp4" if "audio" in st.session_state.selected_format["type"].lower() else "video/mp4"
+                        st.success(f"✅ {st.session_state.selected_format['type']} ready!")
                         st.download_button(
                             label="📥 Download to Device",
                             data=f,
                             file_name=os.path.basename(file_path),
-                            mime="video/mp4",
-                        )
-                elif audio_files and video_files:
-                    st.warning("⚠️ FFmpeg not available — downloading separately.")
-                    with open(video_files[0], "rb") as vf:
-                        st.download_button(
-                            "📺 Download Video (no sound)",
-                            vf,
-                            os.path.basename(video_files[0]),
-                            mime="video/mp4",
-                        )
-                    with open(audio_files[0], "rb") as af:
-                        st.download_button(
-                            "🎧 Download Audio",
-                            af,
-                            os.path.basename(audio_files[0]),
-                            mime="audio/mp4",
+                            mime=mime,
                         )
                 else:
                     st.error("❌ File not found after download. Try again.")
