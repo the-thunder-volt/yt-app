@@ -86,3 +86,24 @@ if st.button("Confirm & Start Download"):
                                 st.success("Video with audio ready for download.")
                                 st.download_button(
                                     label="Download Merged Video (MP4)",
+                                    data=vf,
+                                    file_name=os.path.basename(merged_file),
+                                    mime="video/mp4"
+                                )
+
+                        if os.path.exists(audio_path):
+                            with open(audio_path, "rb") as af:
+                                st.download_button(
+                                    label="Download Separate Audio (M4A)",
+                                    data=af,
+                                    file_name=os.path.basename(audio_path),
+                                    mime="audio/mp4"
+                                )
+                        else:
+                            st.warning("Audio extraction failed.")
+
+                    except Exception as err:
+                        st.error(f"Error during download: {err}")
+
+            except Exception as e:
+                st.error(f"Error preparing video: {e}")
