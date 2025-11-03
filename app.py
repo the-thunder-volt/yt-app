@@ -10,7 +10,46 @@ url = st.text_input("🔗 Enter YouTube Video URL:")
 if st.button("Confirm & Prepare Download"):
     if not url.strip():
         st.error("❌ Please enter a valid YouTube URL.")
+    else:import streamlit as st
+import yt_dlp
+import os
+import tempfile
+
+st.set_page_config(page_title="YouTube Downloader", page_icon="🎞️")
+st.title("🎞️ YouTube Downloader — True Best Quality (Video + Audio)")
+
+url = st.text_input("🔗 Enter YouTube Video URL:")
+
+if st.button("Confirm & Prepare Download"):
+    if not url.strip():
+        st.error("❌ Please enter a valid YouTube URL.")
     else:
+        with st.spinner("Analyzing video streams... please wait ⏳"):
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
+
+                    # ✅ Best possible video + audio
+                    ydl_opts = {
+                        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
+                        "merge_output_format": "mp4",
+                        "outtmpl": output_template,
+                        "noplaylist": True,
+                        "prefer_ffmpeg": True,
+                        "quiet": True,
+                        "postprocessor_args": ["-c:v", "copy", "-c:a", "aac"]
+                    }
+
+                    # Extract video info first
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        title = info.get("title", "video")
+                        filesize = info.get("filesize_approx") or 0
+                        size_mb = round(filesize / (1024 * 1024), 2)
+                        quality = info.get("resolution") or f"{info.get('height', '?')}p"
+
+                    st.info(f"🎥 **{title}**  |
+
         with st.spinner("Analyzing video... please wait."):
             try:
                 # Temporary directory for safe handling
