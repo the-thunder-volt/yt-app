@@ -6,18 +6,12 @@ import glob
 import shutil
 
 st.set_page_config(page_title="🎬 YouTube Downloader", page_icon="🎥")
-st.title("🎬 YouTube Downloader (All Formats)")
+st.title("🎬 YouTube Downloader – Best Quality (Auto Merge)")
 
 url = st.text_input("Enter YouTube video URL:")
 
-if "formats" not in st.session_state:
-    st.session_state.formats = []
-if "selected_format" not in st.session_state:
-    st.session_state.selected_format = None
-
 progress_bar = st.progress(0)
 status_placeholder = st.empty()
-
 
 def progress_hook(d):
     if d['status'] == 'downloading':
@@ -33,111 +27,56 @@ def progress_hook(d):
         status_placeholder.info("✅ Download complete — processing...")
 
 
-# ========== STEP 1: FETCH FORMATS ==========
-if st.button("🔍 Fetch Available Qualities"):
+if st.button("🚀 Download Best Quality"):
     if not url.strip():
-        st.error("Please enter a valid YouTube URL.")
-    else:
-        try:
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-                formats = []
-                for f in info["formats"]:
-                    filesize = f.get("filesize") or f.get("filesize_approx")
-                    height = f.get("height", 0)
-                    resolution = f.get("resolution") or (f"{height}p" if height else "audio")
-                    vcodec = f.get("vcodec")
-                    acodec = f.get("acodec")
-                    type_str = (
-                        "🎞️ Video+Audio" if vcodec != "none" and acodec != "none" else
-                        "🎥 Video-only" if vcodec != "none" else
-                        "🎧 Audio-only"
-                    )
-
-                    formats.append({
-                        "format_id": f["format_id"],
-                        "ext": f["ext"],
-                        "resolution": resolution,
-                        "fps": f.get("fps", ""),
-                        "filesize": filesize,
-                        "vcodec": vcodec,
-                        "acodec": acodec,
-                        "height": height,
-                        "type": type_str,
-                    })
-
-                if not formats:
-                    st.warning("⚠️ No formats found for this video.")
-                else:
-                    st.session_state.formats = sorted(formats, key=lambda x: (x["height"] or 0))
-                    st.success("✅ All available qualities fetched successfully!")
-
-        except Exception as e:
-            st.error(f"⚠️ Error fetching formats: {e}")
-
-
-# ========== STEP 2: SELECT FORMAT ==========
-if st.session_state.formats:
-    options = [
-        f"{f['resolution']} | {f['type']} | {f['ext']} | "
-        f"{round((f['filesize'] or 0)/1024/1024, 1)} MB"
-        for f in st.session_state.formats
-    ]
-    selected_index = st.selectbox(
-        "🎚️ Choose format to download:",
-        range(len(options)),
-        format_func=lambda i: options[i],
-    )
-    st.session_state.selected_format = st.session_state.formats[selected_index]
-
-
-# ========== STEP 3: DOWNLOAD ==========
-if st.button("✅ Confirm & Download"):
-    if not url.strip():
-        st.error("Please enter a valid YouTube URL.")
-    elif not st.session_state.selected_format:
-        st.error("Please fetch and select a format first.")
+        st.error("Please enter a YouTube URL.")
     else:
         with tempfile.TemporaryDirectory() as tmpdir:
-            st.info("Preparing download...")
+            st.info("🔍 Fetching best video and audio streams...")
 
-            output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
+            # Detect FFmpeg
             ffmpeg_path = shutil.which("ffmpeg")
+            ffmpeg_available = ffmpeg_path is not None
 
+            # yt-dlp options
             ydl_opts = {
-                "format": st.session_state.selected_format["format_id"],
-                "outtmpl": output_template,
+                "format": "bv*+ba/best",   # best video + best audio, fallback best
+                "outtmpl": os.path.join(tmpdir, "%(title)s.%(ext)s"),
                 "progress_hooks": [progress_hook],
                 "quiet": True,
             }
 
-            if ffmpeg_path:
-                ydl_opts.update({
-                    "merge_output_format": "mp4",
-                    "ffmpeg_location": ffmpeg_path,
-                })
+            if ffmpeg_available:
+                ydl_opts["merge_output_format"] = "mp4"
+                ydl_opts["ffmpeg_location"] = ffmpeg_path
+            else:
+                st.warning("⚠️ FFmpeg not found — downloading video and audio separately.")
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     title = info.get("title", "video")
-                    base = ydl.prepare_filename(info)
+                    base_filename = ydl.prepare_filename(info)
+                    final_path = os.path.splitext(base_filename)[0] + ".mp4"
 
                 all_files = glob.glob(os.path.join(tmpdir, "*"))
                 media_files = [f for f in all_files if os.path.isfile(f)]
 
-                if media_files:
-                    file_path = media_files[0]
-                    with open(file_path, "rb") as f:
-                        mime = "audio/mp4" if "audio" in st.session_state.selected_format["type"].lower() else "video/mp4"
-                        st.success(f"✅ {st.session_state.selected_format['type']} ready!")
+                # Fallback: find the largest file if merged one not found
+                if not os.path.exists(final_path) and media_files:
+                    final_path = max(media_files, key=os.path.getsize)
+
+                if os.path.exists(final_path):
+                    with open(final_path, "rb") as f:
+                        st.success("✅ Best quality video ready!")
                         st.download_button(
                             label="📥 Download to Device",
                             data=f,
-                            file_name=os.path.basename(file_path),
-                            mime=mime,
+                            file_name=os.path.basename(final_path),
+                            mime="video/mp4"
                         )
                 else:
-                    st.error("❌ File not found after download. Try again.")
+                    st.error("❌ Download failed or merged file not found.")
+
             except Exception as e:
-                st.error(f"⚠️ Error during download: {e}")
+                st.error(f"⚠️ Error: {e}")
